@@ -1073,6 +1073,17 @@ int clang_Cursor_isNull(CXCursor cursor) {
   return clang_equalCursors(cursor, clang_getNullCursor());
 }
 
+int clang_Cursor_isInlined(CXCursor C) {
+  if (!clang_isDeclaration(C.kind))
+    return 0;
+
+  const Decl *D = cxcursor::getCursorDecl(C);
+  if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D))
+    return FD->isInlined() ? 1 : 0;
+
+  return 0;
+}
+
 CXTranslationUnit clang_Cursor_getTranslationUnit(CXCursor cursor) {
   return getCursorTU(cursor);
 }
@@ -1256,6 +1267,120 @@ unsigned long long clang_Cursor_getTemplateArgumentUnsignedValue(CXCursor C,
   }
 
   return TA.getAsIntegral().getZExtValue();
+}
+
+CXType clang_Cursor_getObjCInterfaceParameterizedSuperType(CXCursor C) {
+  const auto K = clang_getCursorKind(C);
+  if (K != CXCursor_ObjCInterfaceDecl)
+    return cxtype::MakeCXType(QualType(), getCursorTU(C));
+  const ObjCInterfaceDecl *FD
+    = llvm::dyn_cast_or_null<clang::ObjCInterfaceDecl>(getCursorDecl(C));
+  if (!FD)
+    return cxtype::MakeCXType(QualType(), getCursorTU(C));
+  const ObjCInterfaceDecl *SD = FD->getSuperClass();
+  if (!SD)
+    return cxtype::MakeCXType(QualType(), getCursorTU(C));
+  const ObjCTypeParamList* TPList = SD->getTypeParamListAsWritten();
+  if (TPList && TPList->size() > 0)
+    return cxtype::MakeCXType(FD->getSuperClassTInfo()->getType(),
+                              getCursorTU(C));
+  return cxtype::MakeCXType(QualType(), getCursorTU(C));
+}
+  
+int clang_Cursor_getNumObjCGenericParams(CXCursor C) {
+  const auto K = clang_getCursorKind(C);
+  const ObjCTypeParamList* TPList = nullptr;
+
+  if (K == CXCursor_ObjCInterfaceDecl) {
+    const ObjCInterfaceDecl *FD
+      = llvm::dyn_cast_or_null<clang::ObjCInterfaceDecl>(getCursorDecl(C));
+    if (FD) {
+      TPList = FD->getTypeParamListAsWritten();
+    }
+  } else if (K == CXCursor_ObjCCategoryDecl) {
+    const ObjCCategoryDecl *FD
+      = llvm::dyn_cast_or_null<clang::ObjCCategoryDecl>(getCursorDecl(C));
+    if (FD) {
+      TPList = FD->getTypeParamList();
+    }
+  }
+
+  if (TPList) {
+    return TPList->size();
+  }
+
+  return -1;
+}
+
+static int clang_Cursor_getObjCGenericParam(CXCursor C,
+                                            unsigned I,
+                                            ObjCTypeParamDecl **TA) {
+  const auto K = clang_getCursorKind(C);
+  const ObjCTypeParamList* TPList = nullptr;
+
+  if (K == CXCursor_ObjCInterfaceDecl) {
+    const ObjCInterfaceDecl *FD
+      = llvm::dyn_cast_or_null<clang::ObjCInterfaceDecl>(getCursorDecl(C));
+    if (FD) {
+      TPList = FD->getTypeParamListAsWritten();
+    }
+  } else if (K == CXCursor_ObjCCategoryDecl) {
+    const ObjCCategoryDecl *FD
+      = llvm::dyn_cast_or_null<clang::ObjCCategoryDecl>(getCursorDecl(C));
+    if (FD) {
+      TPList = FD->getTypeParamList();
+    }
+  }
+
+  if (!TPList) {
+    return -1; // Cursor Not Function Decl
+  }
+
+  if (I >= TPList->size()) {
+    return -1; // Invalid Index
+  }
+
+  *TA = *(TPList->begin() + I);
+  return 0; // Success
+}
+
+CXType clang_Cursor_getObjCGenericParamType(CXCursor C,
+                                            unsigned I) {
+  ObjCTypeParamDecl *TA;
+  if (clang_Cursor_getObjCGenericParam(C, I, &TA) != 0) {
+    return cxtype::MakeCXType(QualType(), getCursorTU(C));
+  }
+
+  const Type *T = TA->getTypeForDecl();
+  if (T)
+    return cxtype::MakeCXType(QualType(T, 0), getCursorTU(C));
+
+  auto &Ctx = TA->getASTContext();
+  auto QT = Ctx.getTypedefType(TA);
+  if (!QT.isNull()) {
+    return cxtype::MakeCXType(QT, getCursorTU(C));
+  }
+
+  return cxtype::MakeCXType(QualType(), getCursorTU(C));
+}
+
+enum CXObjCTypeParamVariance clang_Cursor_getObjCGenericParamVariance(CXCursor C,
+                                                                      unsigned I) {
+  ObjCTypeParamDecl *TA;
+  if (clang_Cursor_getObjCGenericParam(C, I, &TA) != 0) {
+    return CXObjCTypeParamVariance_Invalid;
+  }
+
+  switch (TA->getVariance()) {
+    case ObjCTypeParamVariance::Invariant:
+      return CXObjCTypeParamVariance_Invariant;
+    case ObjCTypeParamVariance::Covariant:
+      return CXObjCTypeParamVariance_Covariant;
+    case ObjCTypeParamVariance::Contravariant:
+      return CXObjCTypeParamVariance_Contravariant;
+  }
+
+  return CXObjCTypeParamVariance_Invalid;
 }
 
 } // end: extern "C"

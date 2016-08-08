@@ -2418,6 +2418,11 @@ CINDEX_LINKAGE unsigned clang_equalCursors(CXCursor, CXCursor);
 CINDEX_LINKAGE int clang_Cursor_isNull(CXCursor cursor);
 
 /**
+ * \brief Returns non-zero if \p C refers to an inlined function.
+ */
+CINDEX_LINKAGE int clang_Cursor_isInlined(CXCursor cursor);
+
+/**
  * \brief Compute a hash value for the given cursor.
  */
 CINDEX_LINKAGE unsigned clang_hashCursor(CXCursor);
@@ -3176,6 +3181,29 @@ CINDEX_LINKAGE long long clang_Cursor_getTemplateArgumentValue(CXCursor C,
 CINDEX_LINKAGE unsigned long long clang_Cursor_getTemplateArgumentUnsignedValue(
     CXCursor C, unsigned I);
 
+enum CXObjCTypeParamVariance {
+  CXObjCTypeParamVariance_Invalid = -1,
+
+  /// The parameter is invariant: must match exactly.
+  CXObjCTypeParamVariance_Invariant,
+  /// The parameter is covariant, e.g., X<T> is a subtype of X<U> when
+  /// the type parameter is covariant and T is a subtype of U.
+  CXObjCTypeParamVariance_Covariant,
+  /// The parameter is contravariant, e.g., X<T> is a subtype of X<U>
+  /// when the type parameter is covariant and U is a subtype of T.
+  CXObjCTypeParamVariance_Contravariant
+};
+
+CINDEX_LINKAGE CXType clang_Cursor_getObjCInterfaceParameterizedSuperType(CXCursor C);
+
+CINDEX_LINKAGE int clang_Cursor_getNumObjCGenericParams(CXCursor C);
+
+CINDEX_LINKAGE CXType clang_Cursor_getObjCGenericParamType(CXCursor C,
+    unsigned I);
+
+CINDEX_LINKAGE enum CXObjCTypeParamVariance clang_Cursor_getObjCGenericParamVariance(
+    CXCursor C, unsigned I);
+
 /**
  * \brief Determine whether two CXTypes represent the same type.
  *
@@ -3232,6 +3260,26 @@ CINDEX_LINKAGE unsigned clang_isVolatileQualifiedType(CXType T);
  * different level.
  */
 CINDEX_LINKAGE unsigned clang_isRestrictQualifiedType(CXType T);
+
+/**
+ * \brief Determine whether a CXType is a signed integer type.
+ */
+CINDEX_LINKAGE unsigned clang_isSignedIntegerType(CXType CT);
+
+/**
+ * \brief Determine whether a CXType is an unsigned integer type.
+ */
+CINDEX_LINKAGE unsigned clang_isUnsignedIntegerType(CXType CT);
+
+/**
+ * \brief Determine whether a CXType is a signed integer or enum type.
+ */
+CINDEX_LINKAGE unsigned clang_isSignedIntegerOrEnumerationType(CXType CT);
+
+/**
+ * \brief Determine whether a CXType is an unsigned integer or enum type.
+ */
+CINDEX_LINKAGE unsigned clang_isUnsignedIntegerOrEnumerationType(CXType CT);
 
 /**
  * \brief For pointer types, returns the type of the pointee.
@@ -3335,6 +3383,35 @@ CINDEX_LINKAGE CXType clang_getArrayElementType(CXType T);
  * If a non-array type is passed in, -1 is returned.
  */
 CINDEX_LINKAGE long long clang_getArraySize(CXType T);
+
+/**
+ * \brief Describes the nullability of a particular type
+ */
+enum CXNullabilityKind {
+  CXNullabilityKind_NonNull = 0,
+  CXNullabilityKind_Nullable = 1,
+  CXNullabilityKind_Unspecified = 2,
+  /* Indicates an error case, the type cannot hold nullability information. */
+  CXNullabilityKind_Invalid = 100
+};
+
+/**
+ * \brief Retrieve the nullability kind of a type.
+ *
+ * If a type which cannot have nullability attribute is passed in,
+ * CXNullabilityKind_Invalid is returned.
+ */
+CINDEX_LINKAGE enum CXNullabilityKind clang_getNullabilityKind(CXType T);
+
+/**
+ * \brief Retrieve the same type by stripping nullability attributes.
+ */
+CINDEX_LINKAGE CXType clang_getTypeByStrippingOuterNullability(CXType T);
+
+/**
+ * \brief Retrieve the same type by stripping Objective-C kindof attribute.
+ */
+CINDEX_LINKAGE CXType clang_getTypeByStrippingOuterObjCKindOf(CXType T);
 
 /**
  * \brief List the possible error codes for \c clang_Type_getSizeOf,
@@ -3463,6 +3540,24 @@ CINDEX_LINKAGE int clang_Type_getNumTemplateArguments(CXType T);
 CINDEX_LINKAGE CXType clang_Type_getTemplateArgumentAsType(CXType T, unsigned i);
 
 /**
+ * \brief Returns non-zero if the cursor specifies an Objective-C type which is
+ * a "kindof" type.
+ */
+CINDEX_LINKAGE unsigned clang_Type_isObjCKindOf(CXType T);
+
+/**
+ * \brief Returns the number of Objective-C protocols of a Objective-C type
+ * specialization, or -1 if type \c T is not an Objective-C type specialization.
+ */
+CINDEX_LINKAGE int clang_Type_getNumObjCProtocols(CXType T);
+
+/**
+ * \brief Returns the cursor of the Objective-C protocol declaration at given
+ * index.
+ */
+CINDEX_LINKAGE CXCursor clang_Type_getObjCProtocolAsCursor(CXType T, unsigned i);
+
+/**
  * \brief Retrieve the ref-qualifier kind of a function or method.
  *
  * The ref-qualifier is returned for C++ functions or methods. For other types
@@ -3524,6 +3619,13 @@ enum CX_StorageClass {
  * CX_SC_Invalid is returned else the storage class.
  */
 CINDEX_LINKAGE enum CX_StorageClass clang_Cursor_getStorageClass(CXCursor);
+
+/**
+ * \brief Returns the evaluated value for a variable declaration.
+ *
+ * If the cursor is not a variable
+ */
+CINDEX_LINKAGE unsigned clang_cursor_getEvaluatedValue(CXCursor, unsigned long long*);
 
 /**
  * \brief Determine the number of overloaded declarations referenced by a 
@@ -5936,6 +6038,14 @@ CINDEX_LINKAGE unsigned clang_Type_visitFields(CXType T,
 /**
  * @}
  */
+ 
+CINDEX_LINKAGE void clang_forceDisableCrashRecovery();
+ 
+CINDEX_LINKAGE void clang_forceSetNoThreads();
+
+CINDEX_LINKAGE int clang_getRawType(CXType T);
+
+CINDEX_LINKAGE const char* clang_getRawTypeName(CXType T);
 
 #ifdef __cplusplus
 }
