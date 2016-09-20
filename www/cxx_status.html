@@ -14,6 +14,7 @@
     .na { background-color: #DDDDDD }
     span:target { background-color: #FFFFBB; outline: #DDDD55 solid thin; }
     th { background-color: #FFDDAA }
+    td { vertical-align: middle }
   </style>
 </head>
 <body>
@@ -567,14 +568,18 @@ as the draft C++1z standard evolves.</p>
     <tr>
       <td>New <tt>auto</tt> rules for direct-list-initialization
       <td><a href="http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2014/n3922.html">N3922</a></td>
-      <td class="svn" align="center">Clang 3.8 <a href="#n3922">(8)</a></td>
+      <td class="full" align="center">Clang 3.8 <a href="#n3922">(8)</a></td>
     </tr>
     <!-- Urbana papers -->
     <tr>
-      <td>Fold expressions</td>
+      <td rowspan="2">Fold expressions</td>
       <td><a href="http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2014/n4295.html">N4295</a></td>
       <td class="full" align="center">Clang 3.6</td>
     </tr>
+      <tr> <!-- from Jacksonville -->
+        <td><a href="http://wg21.link/p0036r0">P0036R0</a></td>
+        <td class="svn" align="center">SVN</td>
+      </tr>
     <tr>
       <td><tt>u8</tt> character literals</td>
       <td><a href="http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2014/n4267.html">N4267</a></td>
@@ -599,12 +604,12 @@ as the draft C++1z standard evolves.</p>
     <tr>
       <td>Remove deprecated <tt>register</tt> storage class</td>
       <td><a href="http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2015/p0001r1.html">P0001R1</a></td>
-      <td class="svn" align="center">Clang 3.8</td>
+      <td class="full" align="center">Clang 3.8</td>
     </tr>
     <tr>
       <td>Remove deprecated <tt>bool</tt> increment</td>
       <td><a href="http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2015/p0002r1.html">P0002R1</a></td>
-      <td class="svn" align="center">Clang 3.8</td>
+      <td class="full" align="center">Clang 3.8</td>
     </tr>
     <tr>
       <td>Make exception specifications part of the type system</td>
@@ -619,7 +624,112 @@ as the draft C++1z standard evolves.</p>
     <tr>
       <td>New specification for inheriting constructors (<a href="cxx_dr_status.html#1941">DR1941</a> et al)</td>
       <td><a href="http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2015/p0136r1.html">P0136R1</a></td>
+      <td class="svn" align="center">SVN <a href="#p0136">(9)</a></td>
+    </tr>
+    <!-- Jacksonville papers -->
+    <tr>
+      <td><tt>[[fallthrough]]</tt> attribute</td>
+      <td><a href="http://wg21.link/p0188r1">P0188R1</a></td>
+      <td class="svn" align="center">SVN</td>
+    </tr>
+    <tr>
+      <td><tt>[[nodiscard]]</tt> attribute</td>
+      <td><a href="http://wg21.link/p0189r1">P0189R1</a></td>
+      <td class="svn" align="center">SVN</td>
+    </tr>
+    <tr>
+      <td><tt>[[maybe_unused]]</tt> attribute</td>
+      <td><a href="http://wg21.link/p0212r1">P0212R1</a></td>
+      <td class="svn" align="center">SVN</td>
+    </tr>
+    <tr>
+      <td>Aggregate initialization of classes with base classes</td>
+      <td><a href="http://wg21.link/p0017r1">P0017R1</a></td>
+      <td class="svn" align="center">SVN</td>
+    </tr>
+    <tr>
+      <td><tt>constexpr</tt> lambda expressions</td>
+      <td><a href="http://wg21.link/p0170r1">P0170R1</a></td>
       <td class="none" align="center">No</td>
+    </tr>
+    <tr>
+      <td>Differing <tt>begin</tt> and <tt>end</tt> types in range-based <tt>for</tt></td>
+      <td><a href="http://wg21.link/p0184r0">P0184R0</a></td>
+      <td class="svn" align="center">SVN</td>
+    </tr>
+    <tr>
+      <td>Lambda capture of <tt>*this</tt></td>
+      <td><a href="http://wg21.link/p0018r3">P0018R3</a></td>
+      <td class="svn" align="center">SVN</td>
+    </tr>
+    <tr>
+      <td>Direct-list-initialization of <tt>enum</tt>s</td>
+      <td><a href="http://wg21.link/p0138r2">P0138R2</a></td>
+      <td class="svn" align="center">SVN</td>
+    </tr>
+    <tr>
+      <td>Hexadecimal floating-point literals</td>
+      <td><a href="http://wg21.link/p0245r1">P0245R1</a></td>
+      <td class="full" align="center">Yes</td>
+    </tr>
+    <!-- Oulu papers -->
+    <tr>
+      <td>Using attribute namespaces without repetition</td>
+      <td><a href="http://wg21.link/p0028r4">P0028R4</a></td>
+      <td class="svn" align="center">SVN</td>
+    </tr>
+    <tr>
+      <td>Dynamic memory allocation for over-aligned data</td>
+      <td><a href="http://wg21.link/p0035r4">P0035R4</a></td>
+      <td class="none" align="center">No</td>
+    </tr>
+    <tr>
+      <td>Template argument deduction for class templates</td>
+      <td><a href="http://wg21.link/p0091r3">P0091R3</a></td>
+      <td class="none" align="center">No</td>
+    </tr>
+    <tr>
+      <td>Non-type template parameters with <tt>auto</tt> type</td>
+      <td><a href="http://wg21.link/p0127r2">P0127R2</a></td>
+      <td class="none" align="center">No</td>
+    </tr>
+    <tr>
+      <td>Guaranteed copy elision</td>
+      <td><a href="http://wg21.link/p0135r1">P0135R1</a></td>
+      <td class="none" align="center">No</td>
+    </tr>
+    <tr>
+      <td rowspan=2>Stricter expression evaluation order</td>
+      <td><a href="http://wg21.link/p0145r3">P0145R3</a></td>
+      <td class="none" align="center" rowspan=2>No</td>
+    </tr>
+    <tr>
+      <td><a href="http://wg21.link/p0400r0">P0400R0</a></td>
+    </tr>
+    <tr>
+      <td>Requirement to ignore unknown attributes</td>
+      <td><a href="http://wg21.link/p0283r2">P0283R2</a></td>
+      <td class="full" align="center">Yes</td>
+    </tr>
+    <tr>
+      <td><tt>constexpr</tt> <em>if-statement</em>s</td>
+      <td><a href="http://wg21.link/p0292r2">P0292R2</a></td>
+      <td class="svn" align="center">SVN</td>
+    </tr>
+    <tr>
+      <td>Inline variables</td>
+      <td><a href="http://wg21.link/p0386r2">P0386R2</a></td>
+      <td class="svn" align="center">SVN</td>
+    </tr>
+    <tr>
+      <td>Structured bindings</td>
+      <td><a href="http://wg21.link/p0217r3">P0217R3</a></td>
+      <td class="none" align="center">No</td>
+    </tr>
+    <tr>
+      <td>Separate variable and condition for <tt>if</tt> and <tt>switch</tt></td>
+      <td><a href="http://wg21.link/p0305r1">P0305R1</a></td>
+      <td class="svn" align="center">SVN</td>
     </tr>
 </table>
 
@@ -628,6 +738,9 @@ as the draft C++1z standard evolves.</p>
 all language versions that allow type deduction from <tt>auto</tt>
 (per the request of the C++ committee).
 In Clang 3.7, a warning is emitted for all cases that would change meaning.
+</span><br>
+<span id="p0136">(9): This is the resolution to a Defect Report, so is applied
+to all language versions supporting inheriting constructors.
 </span>
 </p>
 
@@ -683,6 +796,11 @@ Clang version they became available:</p>
     <tr>
       <td>[DRAFT TS] Library Fundamentals, Version 2 (<tt>source_location</tt>)</td>
       <td><a href="http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2015/n4529.html">N4529</a></td>
+      <td class="none" align="center">No</td>
+    </tr>
+    <tr>
+      <td>[TS] Modules</td>
+      <td><a href="http://wg21.link/p0143r2">P0143R2</a></td>
       <td class="none" align="center">No</td>
     </tr>
     <tr>

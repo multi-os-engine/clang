@@ -525,6 +525,7 @@ NumericLiteralParser::NumericLiteralParser(StringRef TokSpelling,
   isHalf = false;
   isFloat = false;
   isImaginary = false;
+  isFloat128 = false;
   MicrosoftInteger = 0;
   hadError = false;
 
@@ -567,8 +568,16 @@ NumericLiteralParser::NumericLiteralParser(StringRef TokSpelling,
     case 'f':      // FP Suffix for "float"
     case 'F':
       if (!isFPConstant) break;  // Error for integer constant.
-      if (isHalf || isFloat || isLong) break; // HF, FF, LF invalid.
+      if (isHalf || isFloat || isLong || isFloat128)
+        break; // HF, FF, LF, QF invalid.
       isFloat = true;
+      continue;  // Success.
+    case 'q':    // FP Suffix for "__float128"
+    case 'Q':
+      if (!isFPConstant) break;  // Error for integer constant.
+      if (isHalf || isFloat || isLong || isFloat128)
+        break; // HQ, FQ, LQ, QQ invalid.
+      isFloat128 = true;
       continue;  // Success.
     case 'u':
     case 'U':
@@ -579,7 +588,7 @@ NumericLiteralParser::NumericLiteralParser(StringRef TokSpelling,
     case 'l':
     case 'L':
       if (isLong || isLongLong) break;  // Cannot be repeated.
-      if (isHalf || isFloat) break;     // LH, LF invalid.
+      if (isHalf || isFloat || isFloat128) break;     // LH, LF, LQ invalid.
 
       // Check for long long.  The L's need to be adjacent and the same case.
       if (s[1] == s[0]) {
@@ -797,7 +806,8 @@ void NumericLiteralParser::ParseNumberStartingWithZero(SourceLocation TokLoc) {
 
     if (!HasSignificandDigits) {
       PP.Diag(PP.AdvanceToTokenCharacter(TokLoc, s - ThisTokBegin),
-        diag::err_hexconstant_requires) << 1;
+              diag::err_hex_constant_requires)
+          << PP.getLangOpts().CPlusPlus << 1;
       hadError = true;
       return;
     }
@@ -821,10 +831,15 @@ void NumericLiteralParser::ParseNumberStartingWithZero(SourceLocation TokLoc) {
       s = first_non_digit;
 
       if (!PP.getLangOpts().HexFloats)
-        PP.Diag(TokLoc, diag::ext_hexconstant_invalid);
+        PP.Diag(TokLoc, PP.getLangOpts().CPlusPlus
+                            ? diag::ext_hex_literal_invalid
+                            : diag::ext_hex_constant_invalid);
+      else if (PP.getLangOpts().CPlusPlus1z)
+        PP.Diag(TokLoc, diag::warn_cxx1z_hex_literal);
     } else if (saw_period) {
-      PP.Diag(PP.AdvanceToTokenCharacter(TokLoc, s-ThisTokBegin),
-              diag::err_hexconstant_requires) << 0;
+      PP.Diag(PP.AdvanceToTokenCharacter(TokLoc, s - ThisTokBegin),
+              diag::err_hex_constant_requires)
+          << PP.getLangOpts().CPlusPlus << 0;
       hadError = true;
     }
     return;

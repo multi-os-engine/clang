@@ -46,6 +46,8 @@ const OMPClauseWithPreInit *OMPClauseWithPreInit::get(const OMPClause *C) {
     return static_cast<const OMPLastprivateClause *>(C);
   case OMPC_reduction:
     return static_cast<const OMPReductionClause *>(C);
+  case OMPC_linear:
+    return static_cast<const OMPLinearClause *>(C);
   case OMPC_default:
   case OMPC_proc_bind:
   case OMPC_if:
@@ -56,7 +58,6 @@ const OMPClauseWithPreInit *OMPClauseWithPreInit::get(const OMPClause *C) {
   case OMPC_collapse:
   case OMPC_private:
   case OMPC_shared:
-  case OMPC_linear:
   case OMPC_aligned:
   case OMPC_copyin:
   case OMPC_copyprivate:
@@ -85,6 +86,11 @@ const OMPClauseWithPreInit *OMPClauseWithPreInit::get(const OMPClause *C) {
   case OMPC_hint:
   case OMPC_defaultmap:
   case OMPC_unknown:
+  case OMPC_uniform:
+  case OMPC_to:
+  case OMPC_from:
+  case OMPC_use_device_ptr:
+  case OMPC_is_device_ptr:
     break;
   }
 
@@ -102,6 +108,8 @@ const OMPClauseWithPostUpdate *OMPClauseWithPostUpdate::get(const OMPClause *C) 
     return static_cast<const OMPLastprivateClause *>(C);
   case OMPC_reduction:
     return static_cast<const OMPReductionClause *>(C);
+  case OMPC_linear:
+    return static_cast<const OMPLinearClause *>(C);
   case OMPC_schedule:
   case OMPC_dist_schedule:
   case OMPC_firstprivate:
@@ -115,7 +123,6 @@ const OMPClauseWithPostUpdate *OMPClauseWithPostUpdate::get(const OMPClause *C) 
   case OMPC_collapse:
   case OMPC_private:
   case OMPC_shared:
-  case OMPC_linear:
   case OMPC_aligned:
   case OMPC_copyin:
   case OMPC_copyprivate:
@@ -144,6 +151,11 @@ const OMPClauseWithPostUpdate *OMPClauseWithPostUpdate::get(const OMPClause *C) 
   case OMPC_hint:
   case OMPC_defaultmap:
   case OMPC_unknown:
+  case OMPC_uniform:
+  case OMPC_to:
+  case OMPC_from:
+  case OMPC_use_device_ptr:
+  case OMPC_is_device_ptr:
     break;
   }
 
@@ -304,7 +316,8 @@ OMPLinearClause *OMPLinearClause::Create(
     const ASTContext &C, SourceLocation StartLoc, SourceLocation LParenLoc,
     OpenMPLinearClauseKind Modifier, SourceLocation ModifierLoc,
     SourceLocation ColonLoc, SourceLocation EndLoc, ArrayRef<Expr *> VL,
-    ArrayRef<Expr *> PL, ArrayRef<Expr *> IL, Expr *Step, Expr *CalcStep) {
+    ArrayRef<Expr *> PL, ArrayRef<Expr *> IL, Expr *Step, Expr *CalcStep,
+    Stmt *PreInit, Expr *PostUpdate) {
   // Allocate space for 4 lists (Vars, Inits, Updates, Finals) and 2 expressions
   // (Step and CalcStep).
   void *Mem = C.Allocate(totalSizeToAlloc<Expr *>(5 * VL.size() + 2));
@@ -321,6 +334,8 @@ OMPLinearClause *OMPLinearClause::Create(
             nullptr);
   Clause->setStep(Step);
   Clause->setCalcStep(CalcStep);
+  Clause->setPreInitStmt(PreInit);
+  Clause->setPostUpdateExpr(PostUpdate);
   return Clause;
 }
 
@@ -491,7 +506,7 @@ OMPFlushClause *OMPFlushClause::Create(const ASTContext &C,
                                        SourceLocation LParenLoc,
                                        SourceLocation EndLoc,
                                        ArrayRef<Expr *> VL) {
-  void *Mem = C.Allocate(totalSizeToAlloc<Expr *>(VL.size()));
+  void *Mem = C.Allocate(totalSizeToAlloc<Expr *>(VL.size() + 1));
   OMPFlushClause *Clause =
       new (Mem) OMPFlushClause(StartLoc, LParenLoc, EndLoc, VL.size());
   Clause->setVarRefs(VL);
@@ -503,45 +518,252 @@ OMPFlushClause *OMPFlushClause::CreateEmpty(const ASTContext &C, unsigned N) {
   return new (Mem) OMPFlushClause(N);
 }
 
-OMPDependClause *
-OMPDependClause::Create(const ASTContext &C, SourceLocation StartLoc,
-                        SourceLocation LParenLoc, SourceLocation EndLoc,
-                        OpenMPDependClauseKind DepKind, SourceLocation DepLoc,
-                        SourceLocation ColonLoc, ArrayRef<Expr *> VL) {
-  void *Mem = C.Allocate(totalSizeToAlloc<Expr *>(VL.size()));
+OMPDependClause *OMPDependClause::Create(
+    const ASTContext &C, SourceLocation StartLoc, SourceLocation LParenLoc,
+    SourceLocation EndLoc, OpenMPDependClauseKind DepKind,
+    SourceLocation DepLoc, SourceLocation ColonLoc, ArrayRef<Expr *> VL) {
+  void *Mem = C.Allocate(totalSizeToAlloc<Expr *>(VL.size() + 1));
   OMPDependClause *Clause =
       new (Mem) OMPDependClause(StartLoc, LParenLoc, EndLoc, VL.size());
   Clause->setVarRefs(VL);
   Clause->setDependencyKind(DepKind);
   Clause->setDependencyLoc(DepLoc);
   Clause->setColonLoc(ColonLoc);
+  Clause->setCounterValue(nullptr);
   return Clause;
 }
 
 OMPDependClause *OMPDependClause::CreateEmpty(const ASTContext &C, unsigned N) {
-  void *Mem = C.Allocate(totalSizeToAlloc<Expr *>(N));
+  void *Mem = C.Allocate(totalSizeToAlloc<Expr *>(N + 1));
   return new (Mem) OMPDependClause(N);
 }
 
-OMPMapClause *OMPMapClause::Create(const ASTContext &C, SourceLocation StartLoc,
-                                   SourceLocation LParenLoc,
-                                   SourceLocation EndLoc, ArrayRef<Expr *> VL,
-                                   OpenMPMapClauseKind TypeModifier,
-                                   OpenMPMapClauseKind Type,
-                                   bool TypeIsImplicit,
-                                   SourceLocation TypeLoc) {
-  void *Mem = C.Allocate(totalSizeToAlloc<Expr *>(VL.size()));
-  OMPMapClause *Clause =
-      new (Mem) OMPMapClause(TypeModifier, Type, TypeIsImplicit, TypeLoc,
-                             StartLoc, LParenLoc, EndLoc, VL.size());
-  Clause->setVarRefs(VL);
+void OMPDependClause::setCounterValue(Expr *V) {
+  assert(getDependencyKind() == OMPC_DEPEND_sink ||
+         getDependencyKind() == OMPC_DEPEND_source || V == nullptr);
+  *getVarRefs().end() = V;
+}
+
+const Expr *OMPDependClause::getCounterValue() const {
+  auto *V = *getVarRefs().end();
+  assert(getDependencyKind() == OMPC_DEPEND_sink ||
+         getDependencyKind() == OMPC_DEPEND_source || V == nullptr);
+  return V;
+}
+
+Expr *OMPDependClause::getCounterValue() {
+  auto *V = *getVarRefs().end();
+  assert(getDependencyKind() == OMPC_DEPEND_sink ||
+         getDependencyKind() == OMPC_DEPEND_source || V == nullptr);
+  return V;
+}
+
+unsigned OMPClauseMappableExprCommon::getComponentsTotalNumber(
+    MappableExprComponentListsRef ComponentLists) {
+  unsigned TotalNum = 0u;
+  for (auto &C : ComponentLists)
+    TotalNum += C.size();
+  return TotalNum;
+}
+
+unsigned OMPClauseMappableExprCommon::getUniqueDeclarationsTotalNumber(
+    ArrayRef<ValueDecl *> Declarations) {
+  unsigned TotalNum = 0u;
+  llvm::SmallPtrSet<const ValueDecl *, 8> Cache;
+  for (auto *D : Declarations) {
+    const ValueDecl *VD = D ? cast<ValueDecl>(D->getCanonicalDecl()) : nullptr;
+    if (Cache.count(VD))
+      continue;
+    ++TotalNum;
+    Cache.insert(VD);
+  }
+  return TotalNum;
+}
+
+OMPMapClause *
+OMPMapClause::Create(const ASTContext &C, SourceLocation StartLoc,
+                     SourceLocation LParenLoc, SourceLocation EndLoc,
+                     ArrayRef<Expr *> Vars, ArrayRef<ValueDecl *> Declarations,
+                     MappableExprComponentListsRef ComponentLists,
+                     OpenMPMapClauseKind TypeModifier, OpenMPMapClauseKind Type,
+                     bool TypeIsImplicit, SourceLocation TypeLoc) {
+
+  unsigned NumVars = Vars.size();
+  unsigned NumUniqueDeclarations =
+      getUniqueDeclarationsTotalNumber(Declarations);
+  unsigned NumComponentLists = ComponentLists.size();
+  unsigned NumComponents = getComponentsTotalNumber(ComponentLists);
+
+  // We need to allocate:
+  // NumVars x Expr* - we have an original list expression for each clause list
+  // entry.
+  // NumUniqueDeclarations x ValueDecl* - unique base declarations associated
+  // with each component list.
+  // (NumUniqueDeclarations + NumComponentLists) x unsigned - we specify the
+  // number of lists for each unique declaration and the size of each component
+  // list.
+  // NumComponents x MappableComponent - the total of all the components in all
+  // the lists.
+  void *Mem = C.Allocate(
+      totalSizeToAlloc<Expr *, ValueDecl *, unsigned,
+                       OMPClauseMappableExprCommon::MappableComponent>(
+          NumVars, NumUniqueDeclarations,
+          NumUniqueDeclarations + NumComponentLists, NumComponents));
+  OMPMapClause *Clause = new (Mem) OMPMapClause(
+      TypeModifier, Type, TypeIsImplicit, TypeLoc, StartLoc, LParenLoc, EndLoc,
+      NumVars, NumUniqueDeclarations, NumComponentLists, NumComponents);
+
+  Clause->setVarRefs(Vars);
+  Clause->setClauseInfo(Declarations, ComponentLists);
   Clause->setMapTypeModifier(TypeModifier);
   Clause->setMapType(Type);
   Clause->setMapLoc(TypeLoc);
   return Clause;
 }
 
-OMPMapClause *OMPMapClause::CreateEmpty(const ASTContext &C, unsigned N) {
+OMPMapClause *OMPMapClause::CreateEmpty(const ASTContext &C, unsigned NumVars,
+                                        unsigned NumUniqueDeclarations,
+                                        unsigned NumComponentLists,
+                                        unsigned NumComponents) {
+  void *Mem = C.Allocate(
+      totalSizeToAlloc<Expr *, ValueDecl *, unsigned,
+                       OMPClauseMappableExprCommon::MappableComponent>(
+          NumVars, NumUniqueDeclarations,
+          NumUniqueDeclarations + NumComponentLists, NumComponents));
+  return new (Mem) OMPMapClause(NumVars, NumUniqueDeclarations,
+                                NumComponentLists, NumComponents);
+}
+
+OMPToClause *OMPToClause::Create(const ASTContext &C, SourceLocation StartLoc,
+                                 SourceLocation LParenLoc,
+                                 SourceLocation EndLoc, ArrayRef<Expr *> Vars,
+                                 ArrayRef<ValueDecl *> Declarations,
+                                 MappableExprComponentListsRef ComponentLists) {
+  unsigned NumVars = Vars.size();
+  unsigned NumUniqueDeclarations =
+      getUniqueDeclarationsTotalNumber(Declarations);
+  unsigned NumComponentLists = ComponentLists.size();
+  unsigned NumComponents = getComponentsTotalNumber(ComponentLists);
+
+  // We need to allocate:
+  // NumVars x Expr* - we have an original list expression for each clause list
+  // entry.
+  // NumUniqueDeclarations x ValueDecl* - unique base declarations associated
+  // with each component list.
+  // (NumUniqueDeclarations + NumComponentLists) x unsigned - we specify the
+  // number of lists for each unique declaration and the size of each component
+  // list.
+  // NumComponents x MappableComponent - the total of all the components in all
+  // the lists.
+  void *Mem = C.Allocate(
+      totalSizeToAlloc<Expr *, ValueDecl *, unsigned,
+                       OMPClauseMappableExprCommon::MappableComponent>(
+          NumVars, NumUniqueDeclarations,
+          NumUniqueDeclarations + NumComponentLists, NumComponents));
+
+  OMPToClause *Clause = new (Mem)
+      OMPToClause(StartLoc, LParenLoc, EndLoc, NumVars, NumUniqueDeclarations,
+                  NumComponentLists, NumComponents);
+
+  Clause->setVarRefs(Vars);
+  Clause->setClauseInfo(Declarations, ComponentLists);
+  return Clause;
+}
+
+OMPToClause *OMPToClause::CreateEmpty(const ASTContext &C, unsigned NumVars,
+                                      unsigned NumUniqueDeclarations,
+                                      unsigned NumComponentLists,
+                                      unsigned NumComponents) {
+  void *Mem = C.Allocate(
+      totalSizeToAlloc<Expr *, ValueDecl *, unsigned,
+                       OMPClauseMappableExprCommon::MappableComponent>(
+          NumVars, NumUniqueDeclarations,
+          NumUniqueDeclarations + NumComponentLists, NumComponents));
+  return new (Mem) OMPToClause(NumVars, NumUniqueDeclarations,
+                               NumComponentLists, NumComponents);
+}
+
+OMPFromClause *
+OMPFromClause::Create(const ASTContext &C, SourceLocation StartLoc,
+                      SourceLocation LParenLoc, SourceLocation EndLoc,
+                      ArrayRef<Expr *> Vars, ArrayRef<ValueDecl *> Declarations,
+                      MappableExprComponentListsRef ComponentLists) {
+  unsigned NumVars = Vars.size();
+  unsigned NumUniqueDeclarations =
+      getUniqueDeclarationsTotalNumber(Declarations);
+  unsigned NumComponentLists = ComponentLists.size();
+  unsigned NumComponents = getComponentsTotalNumber(ComponentLists);
+
+  // We need to allocate:
+  // NumVars x Expr* - we have an original list expression for each clause list
+  // entry.
+  // NumUniqueDeclarations x ValueDecl* - unique base declarations associated
+  // with each component list.
+  // (NumUniqueDeclarations + NumComponentLists) x unsigned - we specify the
+  // number of lists for each unique declaration and the size of each component
+  // list.
+  // NumComponents x MappableComponent - the total of all the components in all
+  // the lists.
+  void *Mem = C.Allocate(
+      totalSizeToAlloc<Expr *, ValueDecl *, unsigned,
+                       OMPClauseMappableExprCommon::MappableComponent>(
+          NumVars, NumUniqueDeclarations,
+          NumUniqueDeclarations + NumComponentLists, NumComponents));
+
+  OMPFromClause *Clause = new (Mem)
+      OMPFromClause(StartLoc, LParenLoc, EndLoc, NumVars, NumUniqueDeclarations,
+                    NumComponentLists, NumComponents);
+
+  Clause->setVarRefs(Vars);
+  Clause->setClauseInfo(Declarations, ComponentLists);
+  return Clause;
+}
+
+OMPFromClause *OMPFromClause::CreateEmpty(const ASTContext &C, unsigned NumVars,
+                                          unsigned NumUniqueDeclarations,
+                                          unsigned NumComponentLists,
+                                          unsigned NumComponents) {
+  void *Mem = C.Allocate(
+      totalSizeToAlloc<Expr *, ValueDecl *, unsigned,
+                       OMPClauseMappableExprCommon::MappableComponent>(
+          NumVars, NumUniqueDeclarations,
+          NumUniqueDeclarations + NumComponentLists, NumComponents));
+  return new (Mem) OMPFromClause(NumVars, NumUniqueDeclarations,
+                                 NumComponentLists, NumComponents);
+}
+
+OMPUseDevicePtrClause *OMPUseDevicePtrClause::Create(const ASTContext &C,
+                                                     SourceLocation StartLoc,
+                                                     SourceLocation LParenLoc,
+                                                     SourceLocation EndLoc,
+                                                     ArrayRef<Expr *> VL) {
+  void *Mem = C.Allocate(totalSizeToAlloc<Expr *>(VL.size()));
+  OMPUseDevicePtrClause *Clause =
+      new (Mem) OMPUseDevicePtrClause(StartLoc, LParenLoc, EndLoc, VL.size());
+  Clause->setVarRefs(VL);
+  return Clause;
+}
+
+OMPUseDevicePtrClause *OMPUseDevicePtrClause::CreateEmpty(const ASTContext &C,
+                                                          unsigned N) {
   void *Mem = C.Allocate(totalSizeToAlloc<Expr *>(N));
-  return new (Mem) OMPMapClause(N);
+  return new (Mem) OMPUseDevicePtrClause(N);
+}
+
+OMPIsDevicePtrClause *OMPIsDevicePtrClause::Create(const ASTContext &C,
+                                                   SourceLocation StartLoc,
+                                                   SourceLocation LParenLoc,
+                                                   SourceLocation EndLoc,
+                                                   ArrayRef<Expr *> VL) {
+  void *Mem = C.Allocate(totalSizeToAlloc<Expr *>(VL.size()));
+  OMPIsDevicePtrClause *Clause =
+      new (Mem) OMPIsDevicePtrClause(StartLoc, LParenLoc, EndLoc, VL.size());
+  Clause->setVarRefs(VL);
+  return Clause;
+}
+
+OMPIsDevicePtrClause *OMPIsDevicePtrClause::CreateEmpty(const ASTContext &C,
+                                                        unsigned N) {
+  void *Mem = C.Allocate(totalSizeToAlloc<Expr *>(N));
+  return new (Mem) OMPIsDevicePtrClause(N);
 }

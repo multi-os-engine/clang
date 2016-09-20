@@ -96,6 +96,28 @@ public:
   }
 };
 
+template <> struct ArgTypeTraits<clang::CastKind> {
+private:
+  static clang::CastKind getCastKind(llvm::StringRef AttrKind) {
+    return llvm::StringSwitch<clang::CastKind>(AttrKind)
+#define CAST_OPERATION(Name) .Case( #Name, CK_##Name)
+#include "clang/AST/OperationKinds.def"
+        .Default(CK_Invalid);
+  }
+
+public:
+  static bool is(const VariantValue &Value) {
+    return Value.isString() &&  
+        getCastKind(Value.getString()) != CK_Invalid;
+  }
+  static clang::CastKind get(const VariantValue &Value) {
+    return getCastKind(Value.getString());
+  }
+  static ArgKind getKind() {
+    return ArgKind(ArgKind::AK_String);
+  }
+};
+
 /// \brief Matcher descriptor interface.
 ///
 /// Provides a \c create() method that constructs the matcher from the provided
@@ -325,8 +347,9 @@ public:
 
   template <typename ResultT, typename ArgT,
             ResultT (*F)(ArrayRef<const ArgT *>)>
-  VariadicFuncMatcherDescriptor(llvm::VariadicFunction<ResultT, ArgT, F> Func,
-                          StringRef MatcherName)
+  VariadicFuncMatcherDescriptor(
+      ast_matchers::internal::VariadicFunction<ResultT, ArgT, F> Func,
+      StringRef MatcherName)
       : Func(&variadicMatcherDescriptor<ResultT, ArgT, F>),
         MatcherName(MatcherName.str()),
         ArgsKind(ArgTypeTraits<ArgT>::getKind()) {
@@ -655,9 +678,9 @@ MatcherDescriptor *makeMatcherAutoMarshall(ReturnType (*Func)(ArgType1, ArgType2
 /// \brief Variadic overload.
 template <typename ResultT, typename ArgT,
           ResultT (*Func)(ArrayRef<const ArgT *>)>
-MatcherDescriptor *
-makeMatcherAutoMarshall(llvm::VariadicFunction<ResultT, ArgT, Func> VarFunc,
-                        StringRef MatcherName) {
+MatcherDescriptor *makeMatcherAutoMarshall(
+    ast_matchers::internal::VariadicFunction<ResultT, ArgT, Func> VarFunc,
+    StringRef MatcherName) {
   return new VariadicFuncMatcherDescriptor(VarFunc, MatcherName);
 }
 

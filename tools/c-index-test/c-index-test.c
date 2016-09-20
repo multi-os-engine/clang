@@ -772,9 +772,20 @@ static void PrintCursor(CXCursor Cursor, const char *CommentSchemaFile) {
     
     clang_disposeString(DeprecatedMessage);
     clang_disposeString(UnavailableMessage);
-    
+
+    if (clang_CXXConstructor_isDefaultConstructor(Cursor))
+      printf(" (default constructor)");
+
+    if (clang_CXXConstructor_isMoveConstructor(Cursor))
+      printf(" (move constructor)");
+    if (clang_CXXConstructor_isCopyConstructor(Cursor))
+      printf(" (copy constructor)");
+    if (clang_CXXConstructor_isConvertingConstructor(Cursor))
+      printf(" (converting constructor)");
     if (clang_CXXField_isMutable(Cursor))
       printf(" (mutable)");
+    if (clang_CXXMethod_isDefaulted(Cursor))
+      printf(" (defaulted)");
     if (clang_CXXMethod_isStatic(Cursor))
       printf(" (static)");
     if (clang_CXXMethod_isVirtual(Cursor))
@@ -926,6 +937,7 @@ static void PrintCursor(CXCursor Cursor, const char *CommentSchemaFile) {
         PRINT_PROP_ATTR(weak);
         PRINT_PROP_ATTR(strong);
         PRINT_PROP_ATTR(unsafe_unretained);
+        PRINT_PROP_ATTR(class);
         printf("]");
       }
     }
@@ -1421,10 +1433,10 @@ static enum CXChildVisitResult PrintTypeSize(CXCursor cursor, CXCursor p,
     CXString FieldSpelling = clang_getCursorSpelling(cursor);
     const char *FieldName = clang_getCString(FieldSpelling);
     /* recurse to get the first parent record that is not anonymous. */
-    CXCursor Parent, Record;
     unsigned RecordIsAnonymous = 0;
     if (clang_getCursorKind(cursor) == CXCursor_FieldDecl) {
-      Record = Parent = p;
+      CXCursor Record;
+      CXCursor Parent = p;
       do {
         Record = Parent;
         Parent = clang_getCursorSemanticParent(Record);
@@ -1997,6 +2009,7 @@ static void print_completion_result(CXCompletionResult *completion_result,
   enum CXCursorKind ParentKind;
   CXString ParentName;
   CXString BriefComment;
+  CXString Annotation;
   const char *BriefCommentCString;
   
   fprintf(file, "%s:", clang_getCString(ks));
@@ -2030,9 +2043,10 @@ static void print_completion_result(CXCompletionResult *completion_result,
     for (i = 0; i < annotationCount; ++i) {
       if (i != 0)
         fprintf(file, ", ");
-      fprintf(file, "\"%s\"",
-              clang_getCString(clang_getCompletionAnnotation(
-                                 completion_result->CompletionString, i)));
+      Annotation =
+          clang_getCompletionAnnotation(completion_result->CompletionString, i);
+      fprintf(file, "\"%s\"", clang_getCString(Annotation));
+      clang_disposeString(Annotation);
     }
     fprintf(file, ")");
   }
@@ -2132,25 +2146,6 @@ void print_completion_contexts(unsigned long long contexts, FILE *file) {
   if (contexts & CXCompletionContext_NaturalLanguage) {
     fprintf(file, "Natural language\n");
   }
-}
-
-int my_stricmp(const char *s1, const char *s2) {
-  while (*s1 && *s2) {
-    int c1 = tolower((unsigned char)*s1), c2 = tolower((unsigned char)*s2);
-    if (c1 < c2)
-      return -1;
-    else if (c1 > c2)
-      return 1;
-    
-    ++s1;
-    ++s2;
-  }
-  
-  if (*s1)
-    return 1;
-  else if (*s2)
-    return -1;
-  return 0;
 }
 
 int perform_code_completion(int argc, const char **argv, int timing_only) {
@@ -4445,11 +4440,8 @@ int main(int argc, const char **argv) {
   client_data.argc = argc;
   client_data.argv = argv;
 
-  if (argc > 1 && strcmp(argv[1], "core") == 0) {
+  if (argc > 1 && strcmp(argv[1], "core") == 0)
     client_data.main_func = indextest_core_main;
-    --client_data.argc;
-    ++client_data.argv;
-  }
 
   if (getenv("CINDEXTEST_NOTHREADS"))
     return client_data.main_func(client_data.argc, client_data.argv);

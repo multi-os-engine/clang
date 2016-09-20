@@ -46,7 +46,7 @@ namespace clang {
     const CodeGenOptions &CodeGenOpts;
     const TargetOptions &TargetOpts;
     const LangOptions &LangOpts;
-    raw_pwrite_stream *AsmOutStream;
+    std::unique_ptr<raw_pwrite_stream> AsmOutStream;
     ASTContext *Context;
 
     Timer LLVMIRGeneration;
@@ -68,11 +68,12 @@ namespace clang {
         const TargetOptions &TargetOpts, const LangOptions &LangOpts,
         bool TimePasses, const std::string &InFile,
         const SmallVectorImpl<std::pair<unsigned, llvm::Module *>> &LinkModules,
-        raw_pwrite_stream *OS, LLVMContext &C,
+        std::unique_ptr<raw_pwrite_stream> OS, LLVMContext &C,
         CoverageSourceInfo *CoverageInfo = nullptr)
         : Diags(Diags), Action(Action), CodeGenOpts(CodeGenOpts),
-          TargetOpts(TargetOpts), LangOpts(LangOpts), AsmOutStream(OS),
-          Context(nullptr), LLVMIRGeneration("LLVM IR Generation Time"),
+          TargetOpts(TargetOpts), LangOpts(LangOpts),
+          AsmOutStream(std::move(OS)), Context(nullptr),
+          LLVMIRGeneration("LLVM IR Generation Time"),
           Gen(CreateLLVMCodeGen(Diags, InFile, HeaderSearchOpts, PPOpts,
                                 CodeGenOpts, C, CoverageInfo)) {
       llvm::TimePassesIsEnabled = TimePasses;
@@ -123,14 +124,14 @@ namespace clang {
       return true;
     }
 
-    void HandleInlineMethodDefinition(CXXMethodDecl *D) override {
+    void HandleInlineFunctionDefinition(FunctionDecl *D) override {
       PrettyStackTraceDecl CrashInfo(D, SourceLocation(),
                                      Context->getSourceManager(),
-                                     "LLVM IR generation of inline method");
+                                     "LLVM IR generation of inline function");
       if (llvm::TimePassesIsEnabled)
         LLVMIRGeneration.startTimer();
 
-      Gen->HandleInlineMethodDefinition(D);
+      Gen->HandleInlineFunctionDefinition(D);
 
       if (llvm::TimePassesIsEnabled)
         LLVMIRGeneration.stopTimer();
@@ -173,9 +174,11 @@ namespace clang {
           return;
       }
 
+      EmbedBitcode(getModule(), CodeGenOpts, llvm::MemoryBufferRef());
+
       EmitBackendOutput(Diags, CodeGenOpts, TargetOpts, LangOpts,
-                        C.getTargetInfo().getDataLayoutString(),
-                        getModule(), Action, AsmOutStream);
+                        C.getTargetInfo().getDataLayout(),
+                        getModule(), Action, std::move(AsmOutStream));
 
       Ctx.setInlineAsmDiagnosticHandler(OldHandler, OldContext);
 
@@ -413,9 +416,10 @@ BackendConsumer::StackSizeDiagHandler(const llvm::DiagnosticInfoStackSize &D) {
     return false;
 
   if (const Decl *ND = Gen->GetDeclForMangledName(D.getFunction().getName())) {
+    // FIXME: Shouldn't need to truncate to uint32_t
     Diags.Report(ND->getASTContext().getFullLoc(ND->getLocation()),
                  diag::warn_fe_frame_larger_than)
-        << D.getStackSize() << Decl::castToDeclContext(ND);
+      << static_cast<uint32_t>(D.getStackSize()) << Decl::castToDeclContext(ND);
     return true;
   }
 
@@ -454,7 +458,7 @@ const FullSourceLoc BackendConsumer::getBestLocationFromDebugLoc(
     // we could not translate this location. This can happen in the
     // case of #line directives.
     Diags.Report(Loc, diag::note_fe_backend_invalid_loc)
-        << Filename << Line;
+        << Filename << Line << Column;
 
   return Loc;
 }
@@ -532,7 +536,7 @@ void BackendConsumer::OptimizationRemarkHandler(
   // llvm::DiagnosticInfo::AlwasyPrint or if the -Rpass-analysis flag has a
   // regular expression that matches the name of the pass name in \p D.
 
-  if (D.getPassName() == llvm::DiagnosticInfo::AlwaysPrint ||
+  if (D.shouldAlwaysPrint() ||
       (CodeGenOpts.OptimizationRemarkAnalysisPattern &&
        CodeGenOpts.OptimizationRemarkAnalysisPattern->match(D.getPassName())))
     EmitOptimizationMessage(
@@ -545,7 +549,7 @@ void BackendConsumer::OptimizationRemarkHandler(
   // llvm::DiagnosticInfo::AlwasyPrint or if the -Rpass-analysis flag has a
   // regular expression that matches the name of the pass name in \p D.
 
-  if (D.getPassName() == llvm::DiagnosticInfo::AlwaysPrint ||
+  if (D.shouldAlwaysPrint() ||
       (CodeGenOpts.OptimizationRemarkAnalysisPattern &&
        CodeGenOpts.OptimizationRemarkAnalysisPattern->match(D.getPassName())))
     EmitOptimizationMessage(
@@ -558,7 +562,7 @@ void BackendConsumer::OptimizationRemarkHandler(
   // llvm::DiagnosticInfo::AlwasyPrint or if the -Rpass-analysis flag has a
   // regular expression that matches the name of the pass name in \p D.
 
-  if (D.getPassName() == llvm::DiagnosticInfo::AlwaysPrint ||
+  if (D.shouldAlwaysPrint() ||
       (CodeGenOpts.OptimizationRemarkAnalysisPattern &&
        CodeGenOpts.OptimizationRemarkAnalysisPattern->match(D.getPassName())))
     EmitOptimizationMessage(
@@ -688,7 +692,7 @@ llvm::LLVMContext *CodeGenAction::takeLLVMContext() {
   return VMContext;
 }
 
-static raw_pwrite_stream *
+static std::unique_ptr<raw_pwrite_stream>
 GetOutputStream(CompilerInstance &CI, StringRef InFile, BackendAction Action) {
   switch (Action) {
   case Backend_EmitAssembly:
@@ -711,7 +715,7 @@ GetOutputStream(CompilerInstance &CI, StringRef InFile, BackendAction Action) {
 std::unique_ptr<ASTConsumer>
 CodeGenAction::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
   BackendAction BA = static_cast<BackendAction>(Act);
-  raw_pwrite_stream *OS = GetOutputStream(CI, InFile, BA);
+  std::unique_ptr<raw_pwrite_stream> OS = GetOutputStream(CI, InFile, BA);
   if (BA != Backend_EmitNothing && !OS)
     return nullptr;
 
@@ -751,7 +755,7 @@ CodeGenAction::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
       BA, CI.getDiagnostics(), CI.getHeaderSearchOpts(),
       CI.getPreprocessorOpts(), CI.getCodeGenOpts(), CI.getTargetOpts(),
       CI.getLangOpts(), CI.getFrontendOpts().ShowTimers, InFile, LinkModules,
-      OS, *VMContext, CoverageInfo));
+      std::move(OS), *VMContext, CoverageInfo));
   BEConsumer = Result.get();
   return std::move(Result);
 }
@@ -760,6 +764,22 @@ static void BitcodeInlineAsmDiagHandler(const llvm::SMDiagnostic &SM,
                                          void *Context,
                                          unsigned LocCookie) {
   SM.print(nullptr, llvm::errs());
+
+  auto Diags = static_cast<DiagnosticsEngine *>(Context);
+  unsigned DiagID;
+  switch (SM.getKind()) {
+  case llvm::SourceMgr::DK_Error:
+    DiagID = diag::err_fe_inline_asm;
+    break;
+  case llvm::SourceMgr::DK_Warning:
+    DiagID = diag::warn_fe_inline_asm;
+    break;
+  case llvm::SourceMgr::DK_Note:
+    DiagID = diag::note_fe_inline_asm;
+    break;
+  }
+
+  Diags->Report(DiagID).AddString("cannot compile inline asm");
 }
 
 void CodeGenAction::ExecuteAction() {
@@ -767,7 +787,8 @@ void CodeGenAction::ExecuteAction() {
   if (getCurrentFileKind() == IK_LLVM_IR) {
     BackendAction BA = static_cast<BackendAction>(Act);
     CompilerInstance &CI = getCompilerInstance();
-    raw_pwrite_stream *OS = GetOutputStream(CI, getCurrentFile(), BA);
+    std::unique_ptr<raw_pwrite_stream> OS =
+        GetOutputStream(CI, getCurrentFile(), BA);
     if (BA != Backend_EmitNothing && !OS)
       return;
 
@@ -777,6 +798,11 @@ void CodeGenAction::ExecuteAction() {
     llvm::MemoryBuffer *MainFile = SM.getBuffer(FID, &Invalid);
     if (Invalid)
       return;
+
+    // For ThinLTO backend invocations, ensure that the context
+    // merges types based on ODR identifiers.
+    if (!CI.getCodeGenOpts().ThinLTOIndexFile.empty())
+      VMContext->enableDebugTypeODRUniquing();
 
     llvm::SMDiagnostic Err;
     TheModule = parseIR(MainFile->getMemBufferRef(), Err, *VMContext);
@@ -810,11 +836,16 @@ void CodeGenAction::ExecuteAction() {
       TheModule->setTargetTriple(TargetOpts.Triple);
     }
 
+    EmbedBitcode(TheModule.get(), CI.getCodeGenOpts(),
+                 MainFile->getMemBufferRef());
+
     LLVMContext &Ctx = TheModule->getContext();
-    Ctx.setInlineAsmDiagnosticHandler(BitcodeInlineAsmDiagHandler);
+    Ctx.setInlineAsmDiagnosticHandler(BitcodeInlineAsmDiagHandler,
+                                      &CI.getDiagnostics());
+
     EmitBackendOutput(CI.getDiagnostics(), CI.getCodeGenOpts(), TargetOpts,
-                      CI.getLangOpts(), CI.getTarget().getDataLayoutString(),
-                      TheModule.get(), BA, OS);
+                      CI.getLangOpts(), CI.getTarget().getDataLayout(),
+                      TheModule.get(), BA, std::move(OS));
     return;
   }
 

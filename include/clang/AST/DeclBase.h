@@ -52,6 +52,7 @@ struct PrintingPolicy;
 class RecordDecl;
 class Stmt;
 class StoredDeclsMap;
+class TemplateDecl;
 class TranslationUnitDecl;
 class UsingDirectiveDecl;
 }
@@ -72,13 +73,10 @@ namespace clang {
 ///
 /// Note: There are objects tacked on before the *beginning* of Decl
 /// (and its subclasses) in its Decl::operator new(). Proper alignment
-/// of all subclasses (not requiring more than DeclObjAlignment) is
+/// of all subclasses (not requiring more than the alignment of Decl) is
 /// asserted in DeclBase.cpp.
-class Decl {
+class LLVM_ALIGNAS(/*alignof(uint64_t)*/ 8) Decl {
 public:
-  /// \brief Alignment guaranteed when allocating Decl and any subtypes.
-  enum { DeclObjAlignment = llvm::AlignOf<uint64_t>::Alignment };
-
   /// \brief Lists the kind of concrete classes of Decl.
   enum Kind {
 #define DECL(DERIVED, BASE) DERIVED,
@@ -517,8 +515,8 @@ public:
   bool isImplicit() const { return Implicit; }
   void setImplicit(bool I = true) { Implicit = I; }
 
-  /// \brief Whether this declaration was used, meaning that a definition
-  /// is required.
+  /// \brief Whether *any* (re-)declaration of the entity was used, meaning that
+  /// a definition is required.
   ///
   /// \param CheckUsedAttr When true, also consider the "used" attribute
   /// (in addition to the "used" bit set by \c setUsed()) when determining
@@ -528,7 +526,8 @@ public:
   /// \brief Set whether the declaration is used, in the sense of odr-use.
   ///
   /// This should only be used immediately after creating a declaration.
-  void setIsUsed() { Used = true; }
+  /// It intentionally doesn't notify any listeners.
+  void setIsUsed() { getCanonicalDecl()->Used = true; }
 
   /// \brief Mark the declaration used, in the sense of odr-use.
   ///
@@ -566,6 +565,13 @@ public:
   bool isModulePrivate() const {
     return NextInContextAndBits.getInt() & ModulePrivateFlag;
   }
+
+  /// Return true if this declaration has an attribute which acts as
+  /// definition of the entity, such as 'alias' or 'ifunc'.
+  bool hasDefiningAttr() const;
+
+  /// Return this declaration's defining attribute if it has one.
+  const Attr *getDefiningAttr() const;
 
 protected:
   /// \brief Specify whether this declaration was marked as being private
@@ -897,6 +903,10 @@ public:
             DeclKind <= Decl::lastFunction) ||
            DeclKind == FunctionTemplate;
   }
+
+  /// \brief If this is a declaration that describes some template, this
+  /// method returns that template declaration.
+  TemplateDecl *getDescribedTemplate() const;
 
   /// \brief Returns the function itself, or the templated function if this is a
   /// function template.

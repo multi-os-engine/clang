@@ -101,6 +101,12 @@ NamedDecl *Parser::ParseCXXInlineMethodDef(AccessSpecifier AS,
     return FnD;
   }
 
+  if (SkipFunctionBodies && (!FnD || Actions.canSkipFunctionBody(FnD)) &&
+      trySkippingFunctionBody()) {
+    Actions.ActOnSkippedFunctionBody(FnD);
+    return FnD;
+  }
+
   // In delayed template parsing mode, if we are within a class template
   // or if we are about to parse function member template then consume
   // the tokens and store them for parsing at the end of the translation unit.
@@ -381,7 +387,7 @@ void Parser::ParseLexedMethodDeclaration(LateParsedMethodDeclaration &LM) {
       assert (!OldParam->hasUnparsedDefaultArg());
       if (OldParam->hasUninstantiatedDefaultArg())
         Param->setUninstantiatedDefaultArg(
-                                      Param->getUninstantiatedDefaultArg());
+            OldParam->getUninstantiatedDefaultArg());
       else
         Param->setDefaultArg(OldParam->getInit());
     }
@@ -564,8 +570,10 @@ void Parser::ParseLexedMethodDef(LexedMethod &LM) {
   if (Tok.is(tok::eof) && Tok.getEofData() == LM.D)
     ConsumeAnyToken();
 
-  if (CXXMethodDecl *MD = dyn_cast_or_null<CXXMethodDecl>(LM.D))
-    Actions.ActOnFinishInlineMethodDef(MD);
+  if (auto *FD = dyn_cast_or_null<FunctionDecl>(LM.D))
+    if (isa<CXXMethodDecl>(FD) ||
+        FD->isInIdentifierNamespace(Decl::IDNS_OrdinaryFriend))
+      Actions.ActOnFinishInlineFunctionDef(FD);
 }
 
 /// ParseLexedMemberInitializers - We finished parsing the member specification

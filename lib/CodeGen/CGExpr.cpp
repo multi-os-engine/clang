@@ -11,13 +11,14 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "CodeGenFunction.h"
 #include "CGCXXABI.h"
 #include "CGCall.h"
+#include "CGCleanup.h"
 #include "CGDebugInfo.h"
 #include "CGObjCRuntime.h"
 #include "CGOpenMPRuntime.h"
 #include "CGRecordLayout.h"
+#include "CodeGenFunction.h"
 #include "CodeGenModule.h"
 #include "TargetInfo.h"
 #include "clang/AST/ASTContext.h"
@@ -32,6 +33,7 @@
 #include "llvm/IR/MDBuilder.h"
 #include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Transforms/Utils/SanitizerStats.h"
 
 using namespace clang;
@@ -66,8 +68,6 @@ Address CodeGenFunction::CreateTempAlloca(llvm::Type *Ty, CharUnits Align,
 /// block.
 llvm::AllocaInst *CodeGenFunction::CreateTempAlloca(llvm::Type *Ty,
                                                     const Twine &Name) {
-  if (!Builder.isNamePreserving())
-    return new llvm::AllocaInst(Ty, nullptr, "", AllocaInsertPt);
   return new llvm::AllocaInst(Ty, nullptr, Name, AllocaInsertPt);
 }
 
@@ -362,9 +362,16 @@ EmitMaterializeTemporaryExpr(const MaterializeTemporaryExpr *M) {
                            ConvertTypeForMem(E->getType())
                              ->getPointerTo(Object.getAddressSpace())),
                        Object.getAlignment());
-      // We should not have emitted the initializer for this temporary as a
-      // constant.
-      assert(!Var->hasInitializer());
+
+      // createReferenceTemporary will promote the temporary to a global with a
+      // constant initializer if it can.  It can only do this to a value of
+      // ARC-manageable type if the value is global and therefore "immune" to
+      // ref-counting operations.  Therefore we have no need to emit either a
+      // dynamic initialization or a cleanup and we can just return the address
+      // of the temporary.
+      if (Var->hasInitializer())
+        return MakeAddrLValue(Object, M->getType(), AlignmentSource::Decl);
+
       Var->setInitializer(CGM.EmitNullConstant(E->getType()));
     }
     LValue RefTempDst = MakeAddrLValue(Object, M->getType(),
@@ -417,6 +424,23 @@ EmitMaterializeTemporaryExpr(const MaterializeTemporaryExpr *M) {
       EmitAnyExprToMem(E, Object, Qualifiers(), /*IsInit*/true);
     }
   } else {
+    switch (M->getStorageDuration()) {
+    case SD_Automatic:
+    case SD_FullExpression:
+      if (auto *Size = EmitLifetimeStart(
+              CGM.getDataLayout().getTypeAllocSize(Object.getElementType()),
+              Object.getPointer())) {
+        if (M->getStorageDuration() == SD_Automatic)
+          pushCleanupAfterFullExpr<CallLifetimeEnd>(NormalEHLifetimeMarker,
+                                                    Object, Size);
+        else
+          pushFullExprCleanup<CallLifetimeEnd>(NormalEHLifetimeMarker, Object,
+                                               Size);
+      }
+      break;
+    default:
+      break;
+    }
     EmitAnyExprToMem(E, Object, Qualifiers(), /*IsInit*/true);
   }
   pushTemporaryCleanup(*this, M, E, Object);
@@ -1267,10 +1291,10 @@ llvm::Value *CodeGenFunction::EmitLoadOfScalar(Address Addr, bool Volatile,
   }
 
   // Atomic operations have to be done on integral types.
-  if (Ty->isAtomicType() || typeIsSuitableForInlineAtomic(Ty, Volatile)) {
-    LValue lvalue =
+  LValue AtomicLValue =
       LValue::MakeAddr(Addr, Ty, getContext(), AlignSource, TBAAInfo);
-    return EmitAtomicLoad(lvalue, Loc).getScalarVal();
+  if (Ty->isAtomicType() || LValueIsSuitableForInlineAtomic(AtomicLValue)) {
+    return EmitAtomicLoad(AtomicLValue, Loc).getScalarVal();
   }
 
   llvm::LoadInst *Load = Builder.CreateLoad(Addr, Volatile);
@@ -1378,12 +1402,11 @@ void CodeGenFunction::EmitStoreOfScalar(llvm::Value *Value, Address Addr,
 
   Value = EmitToMemory(Value, Ty);
 
+  LValue AtomicLValue =
+      LValue::MakeAddr(Addr, Ty, getContext(), AlignSource, TBAAInfo);
   if (Ty->isAtomicType() ||
-      (!isInit && typeIsSuitableForInlineAtomic(Ty, Volatile))) {
-    EmitAtomicStore(RValue::get(Value),
-                    LValue::MakeAddr(Addr, Ty, getContext(),
-                                     AlignSource, TBAAInfo),
-                    isInit);
+      (!isInit && LValueIsSuitableForInlineAtomic(AtomicLValue))) {
+    EmitAtomicStore(RValue::get(Value), AtomicLValue, isInit);
     return;
   }
 
@@ -1735,8 +1758,7 @@ void CodeGenFunction::EmitStoreThroughExtVectorComponentLValue(RValue Src,
 
   if (const VectorType *VTy = Dst.getType()->getAs<VectorType>()) {
     unsigned NumSrcElts = VTy->getNumElements();
-    unsigned NumDstElts =
-       cast<llvm::VectorType>(Vec->getType())->getNumElements();
+    unsigned NumDstElts = Vec->getType()->getVectorNumElements();
     if (NumDstElts == NumSrcElts) {
       // Use shuffle vector is the src and destination are the same number of
       // elements and restore the vector mask since it is on the side it will be
@@ -2319,7 +2341,7 @@ llvm::Constant *CodeGenFunction::EmitCheckTypeDescriptor(QualType T) {
   auto *GV = new llvm::GlobalVariable(
       CGM.getModule(), Descriptor->getType(),
       /*isConstant=*/true, llvm::GlobalVariable::PrivateLinkage, Descriptor);
-  GV->setUnnamedAddr(true);
+  GV->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
   CGM.getSanitizerMetadata()->disableSanitizerForGlobal(GV);
 
   // Remember the descriptor for this type.
@@ -2369,7 +2391,33 @@ llvm::Constant *CodeGenFunction::EmitCheckSourceLocation(SourceLocation Loc) {
 
   PresumedLoc PLoc = getContext().getSourceManager().getPresumedLoc(Loc);
   if (PLoc.isValid()) {
-    auto FilenameGV = CGM.GetAddrOfConstantCString(PLoc.getFilename(), ".src");
+    StringRef FilenameString = PLoc.getFilename();
+
+    int PathComponentsToStrip =
+        CGM.getCodeGenOpts().EmitCheckPathComponentsToStrip;
+    if (PathComponentsToStrip < 0) {
+      assert(PathComponentsToStrip != INT_MIN);
+      int PathComponentsToKeep = -PathComponentsToStrip;
+      auto I = llvm::sys::path::rbegin(FilenameString);
+      auto E = llvm::sys::path::rend(FilenameString);
+      while (I != E && --PathComponentsToKeep)
+        ++I;
+
+      FilenameString = FilenameString.substr(I - E);
+    } else if (PathComponentsToStrip > 0) {
+      auto I = llvm::sys::path::begin(FilenameString);
+      auto E = llvm::sys::path::end(FilenameString);
+      while (I != E && PathComponentsToStrip--)
+        ++I;
+
+      if (I != E)
+        FilenameString =
+            FilenameString.substr(I - llvm::sys::path::begin(FilenameString));
+      else
+        FilenameString = llvm::sys::path::filename(FilenameString);
+    }
+
+    auto FilenameGV = CGM.GetAddrOfConstantCString(FilenameString, ".src");
     CGM.getSanitizerMetadata()->disableSanitizerForGlobal(
                           cast<llvm::GlobalVariable>(FilenameGV.getPointer()));
     Filename = FilenameGV.getPointer();
@@ -2481,16 +2529,12 @@ void CodeGenFunction::EmitCheck(
   assert(JointCond);
 
   CheckRecoverableKind RecoverKind = getRecoverableKind(Checked[0].second);
-  // In cross-DSO CFI mode this code is used to generate __cfi_check_fail, which
-  // includes all checks, even those that are not in SanOpts.
-  assert(CGM.getCodeGenOpts().SanitizeCfiCrossDso ||
-         SanOpts.has(Checked[0].second));
+  assert(SanOpts.has(Checked[0].second));
 #ifndef NDEBUG
   for (int i = 1, n = Checked.size(); i < n; ++i) {
     assert(RecoverKind == getRecoverableKind(Checked[i].second) &&
            "All recoverable kinds in a single check must be same!");
-    assert(CGM.getCodeGenOpts().SanitizeCfiCrossDso ||
-           SanOpts.has(Checked[i].second));
+    assert(SanOpts.has(Checked[i].second));
   }
 #endif
 
@@ -2518,7 +2562,7 @@ void CodeGenFunction::EmitCheck(
     auto *InfoPtr =
         new llvm::GlobalVariable(CGM.getModule(), Info->getType(), false,
                                  llvm::GlobalVariable::PrivateLinkage, Info);
-    InfoPtr->setUnnamedAddr(true);
+    InfoPtr->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
     CGM.getSanitizerMetadata()->disableSanitizerForGlobal(InfoPtr);
     Args.push_back(Builder.CreateBitCast(InfoPtr, Int8PtrTy));
     ArgTypes.push_back(Int8PtrTy);
@@ -2577,7 +2621,7 @@ void CodeGenFunction::EmitCfiSlowPathCheck(
     auto *InfoPtr =
         new llvm::GlobalVariable(CGM.getModule(), Info->getType(), false,
                                  llvm::GlobalVariable::PrivateLinkage, Info);
-    InfoPtr->setUnnamedAddr(true);
+    InfoPtr->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
     CGM.getSanitizerMetadata()->disableSanitizerForGlobal(InfoPtr);
 
     llvm::Constant *SlowPathDiagFn = CGM.getModule().getOrInsertFunction(
@@ -2616,8 +2660,8 @@ void CodeGenFunction::EmitCfiCheckFail() {
   Args.push_back(&ArgData);
   Args.push_back(&ArgAddr);
 
-  const CGFunctionInfo &FI = CGM.getTypes().arrangeFreeFunctionDeclaration(
-      getContext().VoidTy, Args, FunctionType::ExtInfo(), /*variadic=*/false);
+  const CGFunctionInfo &FI =
+    CGM.getTypes().arrangeBuiltinFunctionDeclaration(getContext().VoidTy, Args);
 
   llvm::Function *F = llvm::Function::Create(
       llvm::FunctionType::get(VoidTy, {VoidPtrTy, VoidPtrTy}, false),
@@ -2655,7 +2699,7 @@ void CodeGenFunction::EmitCfiCheckFail() {
       CGM.getLLVMContext(),
       llvm::MDString::get(CGM.getLLVMContext(), "all-vtables"));
   llvm::Value *ValidVtable = Builder.CreateZExt(
-      Builder.CreateCall(CGM.getIntrinsic(llvm::Intrinsic::bitset_test),
+      Builder.CreateCall(CGM.getIntrinsic(llvm::Intrinsic::type_test),
                          {Addr, AllVtables}),
       IntPtrTy);
 
@@ -2672,8 +2716,11 @@ void CodeGenFunction::EmitCfiCheckFail() {
     SanitizerMask Mask = CheckKindMaskPair.second;
     llvm::Value *Cond =
         Builder.CreateICmpNE(CheckKind, llvm::ConstantInt::get(Int8Ty, Kind));
-    EmitCheck(std::make_pair(Cond, Mask), "cfi_check_fail", {},
-              {Data, Addr, ValidVtable});
+    if (CGM.getLangOpts().Sanitize.has(Mask))
+      EmitCheck(std::make_pair(Cond, Mask), "cfi_check_fail", {},
+                {Data, Addr, ValidVtable});
+    else
+      EmitTrapCheck(Cond);
   }
 
   FinishFunction();
@@ -2997,7 +3044,7 @@ LValue CodeGenFunction::EmitOMPArraySectionExpr(const OMPArraySectionExpr *E,
   else
     ResultExprTy = BaseTy->getPointeeType();
   llvm::Value *Idx = nullptr;
-  if (IsLowerBound || (!IsLowerBound && E->getColonLoc().isInvalid())) {
+  if (IsLowerBound || E->getColonLoc().isInvalid()) {
     // Requesting lower bound or upper bound, but without provided length and
     // without ':' symbol for the default length -> length = 1.
     // Idx = LowerBound ?: 0;
@@ -3670,6 +3717,10 @@ RValue CodeGenFunction::EmitRValueForField(LValue LV,
   case TEK_Aggregate:
     return FieldLV.asAggregateRValue();
   case TEK_Scalar:
+    // This routine is used to load fields one-by-one to perform a copy, so
+    // don't load reference fields.
+    if (FD->getType()->isReferenceType())
+      return RValue::get(FieldLV.getPointer());
     return EmitLoadOfLValue(FieldLV, Loc);
   }
   llvm_unreachable("bad evaluation kind");
@@ -4016,24 +4067,23 @@ RValue CodeGenFunction::EmitCall(QualType CalleeType, llvm::Value *Callee,
     EmitSanitizerStatReport(llvm::SanStat_CFI_ICall);
 
     llvm::Metadata *MD = CGM.CreateMetadataIdentifierForType(QualType(FnType, 0));
-    llvm::Value *BitSetName = llvm::MetadataAsValue::get(getLLVMContext(), MD);
+    llvm::Value *TypeId = llvm::MetadataAsValue::get(getLLVMContext(), MD);
 
     llvm::Value *CastedCallee = Builder.CreateBitCast(Callee, Int8PtrTy);
-    llvm::Value *BitSetTest =
-        Builder.CreateCall(CGM.getIntrinsic(llvm::Intrinsic::bitset_test),
-                           {CastedCallee, BitSetName});
+    llvm::Value *TypeTest = Builder.CreateCall(
+        CGM.getIntrinsic(llvm::Intrinsic::type_test), {CastedCallee, TypeId});
 
-    auto TypeId = CGM.CreateCfiIdForTypeMetadata(MD);
+    auto CrossDsoTypeId = CGM.CreateCrossDsoCfiTypeId(MD);
     llvm::Constant *StaticData[] = {
         llvm::ConstantInt::get(Int8Ty, CFITCK_ICall),
         EmitCheckSourceLocation(E->getLocStart()),
         EmitCheckTypeDescriptor(QualType(FnType, 0)),
     };
-    if (CGM.getCodeGenOpts().SanitizeCfiCrossDso && TypeId) {
-      EmitCfiSlowPathCheck(SanitizerKind::CFIICall, BitSetTest, TypeId,
+    if (CGM.getCodeGenOpts().SanitizeCfiCrossDso && CrossDsoTypeId) {
+      EmitCfiSlowPathCheck(SanitizerKind::CFIICall, TypeTest, CrossDsoTypeId,
                            CastedCallee, StaticData);
     } else {
-      EmitCheck(std::make_pair(BitSetTest, SanitizerKind::CFIICall),
+      EmitCheck(std::make_pair(TypeTest, SanitizerKind::CFIICall),
                 "cfi_check_fail", StaticData,
                 {CastedCallee, llvm::UndefValue::get(IntPtrTy)});
     }

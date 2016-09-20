@@ -33,8 +33,9 @@
 // CHECK-SANITIZE-COVERAGE-5: error: unsupported argument '5' to option 'fsanitize-coverage='
 
 // RUN: %clang -target x86_64-linux-gnu -fsanitize=thread   -fsanitize-coverage=func %s -### 2>&1 | FileCheck %s --check-prefix=CHECK-SANITIZE-COVERAGE-UNUSED
-// RUN: %clang -target x86_64-linux-gnu                     -fsanitize-coverage=func %s -### 2>&1 | FileCheck %s --check-prefix=CHECK-SANITIZE-COVERAGE-UNUSED
+// RUN: %clang -target x86_64-linux-gnu                     -fsanitize-coverage=func %s -### 2>&1 | FileCheck %s --check-prefix=CHECK-SANITIZE-COVERAGE-FUNC
 // CHECK-SANITIZE-COVERAGE-UNUSED: argument unused during compilation: '-fsanitize-coverage=func'
+// CHECK-SANITIZE-COVERAGE-UNUSED-NOT: -fsanitize-coverage-type=1
 
 // RUN: %clang -target x86_64-linux-gnu -fsanitize=address -fsanitize-coverage=func -fno-sanitize=address %s -### 2>&1 | FileCheck %s --check-prefix=CHECK-SANITIZE-COVERAGE-SAN-DISABLED
 // CHECK-SANITIZE-COVERAGE-SAN-DISABLED-NOT: argument unused

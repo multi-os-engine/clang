@@ -125,6 +125,8 @@ public:
   void FunctionDefinitionInstantiated(const FunctionDecl *D) override;
   void DeclarationMarkedUsed(const Decl *D) override;
   void DeclarationMarkedOpenMPThreadPrivate(const Decl *D) override;
+  void DeclarationMarkedOpenMPDeclareTarget(const Decl *D,
+                                            const Attr *Attr) override;
   void RedefinedHiddenDefinition(const NamedDecl *D, Module *M) override;
   void AddedAttributeToRecord(const Attr *Attr, 
                               const RecordDecl *Record) override;
@@ -219,6 +221,11 @@ void MultiplexASTMutationListener::DeclarationMarkedOpenMPThreadPrivate(
   for (size_t i = 0, e = Listeners.size(); i != e; ++i)
     Listeners[i]->DeclarationMarkedOpenMPThreadPrivate(D);
 }
+void MultiplexASTMutationListener::DeclarationMarkedOpenMPDeclareTarget(
+    const Decl *D, const Attr *Attr) {
+  for (auto *L : Listeners)
+    L->DeclarationMarkedOpenMPDeclareTarget(D, Attr);
+}
 void MultiplexASTMutationListener::RedefinedHiddenDefinition(const NamedDecl *D,
                                                              Module *M) {
   for (auto *L : Listeners)
@@ -272,9 +279,9 @@ bool MultiplexConsumer::HandleTopLevelDecl(DeclGroupRef D) {
   return Continue;
 }
 
-void MultiplexConsumer::HandleInlineMethodDefinition(CXXMethodDecl *D) {
+void MultiplexConsumer::HandleInlineFunctionDefinition(FunctionDecl *D) {
   for (auto &Consumer : Consumers)
-    Consumer->HandleInlineMethodDefinition(D);
+    Consumer->HandleInlineFunctionDefinition(D);
 }
 
 void MultiplexConsumer::HandleCXXStaticMemberVarInstantiation(VarDecl *VD) {
