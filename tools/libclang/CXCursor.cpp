@@ -1649,4 +1649,23 @@ CXType clang_Cursor_getReceiverType(CXCursor C) {
   return cxtype::MakeCXType(QualType(), TU);
 }
 
+CXString clang_Cursor_getObjCRuntimeName(CXCursor C) {
+  const auto K = clang_getCursorKind(C);
+
+  if (K == CXCursor_ObjCInterfaceDecl) {
+    const ObjCInterfaceDecl *FD
+      = llvm::dyn_cast_or_null<clang::ObjCInterfaceDecl>(getCursorDecl(C));
+    if (FD) {
+      return clang::cxstring::createRef(FD->getObjCRuntimeNameAsString());
+    }
+  } else if (K == CXCursor_ObjCProtocolDecl) {
+    const ObjCProtocolDecl *FD
+      = llvm::dyn_cast_or_null<clang::ObjCProtocolDecl>(getCursorDecl(C));
+    if (FD) {
+      return clang::cxstring::createRef(FD->getObjCRuntimeNameAsString());
+    }
+  }
+  return clang::cxstring::createNull();
+}
+
 } // end: extern "C"
