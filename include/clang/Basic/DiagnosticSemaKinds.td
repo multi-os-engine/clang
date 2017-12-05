@@ -8482,7 +8482,7 @@ def warn_nullability_declspec : Warning<
 
 def note_nullability_here : Note<"%0 specified here">;
 
-def err_nullability_nonpointer : Error<
+def err_nullability_nonpointer : Warning<
   "nullability specifier %0 cannot be applied to non-pointer type %1">;
 
 def warn_nullability_lost : Warning<
